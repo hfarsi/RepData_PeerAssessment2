@@ -1,0 +1,96 @@
+---
+title: "Analysis of Natural Disasters Impact on Human Lives and the Economy in the United States"
+output: html_document
+---
+
+##Synopsis
+The U.S. National Oceanic and Atmospheric Administration's (NOAA) has been collecting and annually reporting the events related to any natural disaster occurring across the country and the impact of each on the lives of citizens and the economy in the effected regions. These data are archived in the NOAA database and are available to the public. 
+
+For this report we have used some of the data from NOAA database to study and analysis the data to identify most costly events that have been reported from across the country between 1993 and 2011. We will focus on two aspects of the aftermath of these events: the human casualties and the setback on the economy of the affected region as a whole.  
+
+## Loading and Processing the Raw Data
+
+We read the data from [Dataset:U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) location and used the bzip2 decompression algorithm to decompress the file before reading it into a data frame. Free version of the bzip2 package can be downloaded from the Internet. The data file is stored in directory ~/Storm_Data/repdata_data_StormData.csv of the local hard drive.
+
+We use read.csv2 to read in the data as character class and store them in a data frame. To see if we need to do some clean up and formatting of the data we take a look at the structure of the data.     
+
+```{r, cache=T}
+data <- read.csv2("Storm_Data/repdata_data_StormData.csv", header=TRUE, sep = ",", colClasses = "character")
+dim(data)
+str(data)
+```
+In this study we are interested in the impact of natural events on human lives and property damages, hence need to keep the few columns that have the data for fatalities/injuries, property/crop damages, and their respective exponent (EXP). We also keep few of factored columns such as type of event, beginning date of event, state, etc. We also checked for any NA's in the remaining data, which none existed, and formatted appropriate columns to numeric. 
+
+```{r}
+data1 <- data[,-c(1,5,9:22,29:37)]
+sum(is.na(data1))
+data1[,7] <- as.numeric(data1[,7]); data1[,8] <- as.numeric(data1[,8]); data1[,9] <- as.numeric(data1[,9]); data1[,11] <- as.numeric(data1[,11])
+```
+
+We noticed there are some undefined characters in PROPDMGEXP and CROPDMGEXP. Rows with these value have to be removed from the data before we replace the defined values (H,K,M,B) with their numeric values (100, 1000, etc.), so the total cost of damages can be calculated by adding the dollar amount from properties and crops.  
+
+```{r}
+unique(data1$PROPDMGEXP)
+unique(data1$CROPDMGEXP)
+data1 <- data1[data1$CROPDMGEXP %in% c("K", "M", "B", "b", "m", "k"),]
+data1 <- data1[data1$PROPDMGEXP %in% c("K", "M", "B", "b", "m", "k", "H", "h"),]
+data1$CROPDMGEXP <- gsub("B", "10e+9", data1$CROPDMGEXP, ignore.case=T )
+data1$CROPDMGEXP <- gsub("M", "10e+6", data1$CROPDMGEXP, ignore.case=T )
+data1$CROPDMGEXP <- gsub("k", "1000", data1$CROPDMGEXP, ignore.case=T )
+data1$PROPDMGEXP <- gsub("B", "10e+9", data1$PROPDMGEXP, ignore.case=T )
+data1$PROPDMGEXP <- gsub("M", "10e+6", data1$PROPDMGEXP, ignore.case=T )
+data1$PROPDMGEXP <- gsub("k", "1000", data1$PROPDMGEXP, ignore.case=T )
+data1$PROPDMGEXP <- gsub("H", "100", data1$PROPDMGEXP, ignore.case=T )
+data1$YEAR <- substr(as.Date(data1$BGN_DATE, format="%m/%d/%Y"),1,4)
+```
+Now we are ready to identify events that have the greatest economic consequences.
+
+```{r}
+library(ggplot2)
+library(plyr)
+# Calculate damages to cROps and properties and add them to get the total damage (TOTALDMG)
+data1$CROP <- data1$CROPDMG * as.numeric(data1$CROPDMGEXP)
+data1$PROP <- data1$PROPDMG * as.numeric(data1$PROPDMGEXP)
+data1$TOTALDMG <- data1$CROP + data1$PROP
+# Get the sum of reported damages for each event
+GEC <- ddply(data1, "EVTYPE", summarise, Total_Damage = sum(TOTALDMG))
+GEC <- GEC[order(GEC$Total_Damage, decreasing = T),]
+# Just look at the top events, those with higher than $1B
+topGEC <- GEC[GEC$Total_Damage >= 10e+9,]  
+names(topGEC) <- c("EVTYPE","Total_Damage_Millions")
+topGEC[,2] <- topGEC[,2]/1000
+ggplot(topGEC, aes(x=reorder(EVTYPE,Total_Damage_Millions), y=Total_Damage_Millions)) +
+    geom_bar(stat="identity", fill="blue", colr="black") + 
+    xlab("Event Type") + ylab("Total Damage in Millions") +
+    ggtitle("Types of events with highest impact on the the economy") +
+    theme(axis.text.x = element_text(angle=60, hjust=1))
+topGEC[1,]
+```
+
+Damages to properties and crops across the country from floods is by far the most costly event reported as of 2011, a total of `r topGEC[1,2]` million dollars. 
+
+Similar calculation for causalities (fatality + injuries) caused by natural disasters is done below in order to identify which type of event has caused the most damage to human health across the country. 
+
+```{r}
+data1$FAT_INJ <- data1$FATALITIES + data1$INJURIES
+health <- ddply(data1, "EVTYPE", summarise, Tot_Fatality = sum(FATALITIES), Tot_INJURIES = sum(INJURIES), Total = sum(FAT_INJ))
+health <- health[order(health$Total, decreasing = T),]
+
+ggplot(health[1:20,], aes(x=reorder(EVTYPE,Total), y=Total)) +
+    geom_bar(stat="identity", fill="blue", colr="black") +
+    xlab("Event Type") + ylab("Total Casualties") +
+    ggtitle("Top 20 types of events with largest number of Fatalities + Injuries") +
+    theme(axis.text.x = element_text(angle=60, hjust=1))
+head(health,10)
+```
+Data shows that Tornadoes have taken the lives of `r health[1,2]` people and caused injuries to  `r health[1,3]` people. 
+
+Which state has experienced the highest cost due to flood or any other natural disasters in a year?
+```{r}
+data1 <- data1[order(data1$TOTALDMG, decreasing=T),]
+head(data1[,c(5:6,13:16)])
+```
+The flood in the state of California in 2006 caused the most costly damage to properties and crops over the course of 20 years since 1993.Interestingly, large portion of the cost was related to property damages, a nearly `r round(100*data1$PROP[1]/data1$TOTALDMG[1],2)` percentage.
+
+#Results
+During the course of nearly 20 years (1993-2011) US was hit with 900K natural events. Among them all, Tornadoes have been taking more lives and causing injuries to people of effected regions followed by flood as the second most life threatening event. With respect to damages to properties and crops, floods have caused the most impact to the economy. Just in one event in 2006 the State of California experienced the most devastating flood from a long lasting rainfall in the winter causing major damages to properties and wineries in `r data1[1,4]`. In that year a record high of $115B lose in property and crop damage was reported. 
